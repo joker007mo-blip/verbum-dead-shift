@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SL Tonight Presents — VERBUM: The Dead Shift</title>
+<meta name="description" content="Pages from the booth. Stones breed if you leave them. Rain eats the yard. We Are Where The Nightmares Go.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#0c0a12; --fg:#ece6dc; --cream:#e8dcc8; --muted:#9a9184; --subtle:#6f675c; --gold:#c9a84c; --border:#3a342c; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { min-height:100%; background:var(--bg); color:var(--fg); font-family:"IBM Plex Sans",system-ui,sans-serif; }
+  button { font:inherit; cursor:pointer; }
+  .shell { min-height:100dvh; display:flex; flex-direction:column; align-items:center; }
+  header { display:flex; width:100%; max-width:480px; align-items:end; justify-content:space-between; gap:12px; padding:max(0.6rem,env(safe-area-inset-top)) 16px 4px; }
+  .kicker { font-family:"Bebas Neue",Impact,sans-serif; letter-spacing:.38em; font-size:10px; color:var(--muted); }
+  h1 { font-family:"Bebas Neue",Impact,sans-serif; font-size:1.7rem; letter-spacing:.12em; color:var(--cream); line-height:1; }
+  .sub { font-family:"Bebas Neue",sans-serif; font-size:12px; letter-spacing:.18em; color:var(--gold); }
+  canvas { width:min(100%, calc(72dvh * 360 / 640)); height:min(72dvh,640px); max-height:calc(100dvh - 9rem); aspect-ratio:360/640; background:#0c0a12; border:1px solid var(--border); border-radius:12px; touch-action:none; display:block; }
+  .btn { min-height:44px; padding:0 22px; margin-top:12px; border-radius:8px; font-family:"Bebas Neue",sans-serif; letter-spacing:.16em; font-size:17px; border:1px solid var(--cream); background:var(--cream); color:var(--bg); }
+  .hint { margin:8px 16px max(0.8rem,env(safe-area-inset-bottom)); max-width:36ch; text-align:center; font-size:11px; color:var(--subtle); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div>
+      <p class="kicker">SL TONIGHT PRESENTS</p>
+      <h1>VERBUM</h1>
+    </div>
+    <p class="sub">The Dead Shift</p>
+  </header>
+  <canvas id="c" width="360" height="640"></canvas>
+  <button class="btn" id="clock" type="button">Clock in</button>
+  <p class="hint">Pages fire themselves · WASD / arrows / swipe · sltonight.com</p>
+</div>
+<script>
+const W=360,H=640,PLAYER_ZONE=H*0.72,KEY="verbum-dead-shift-v1";
+const aabb=(a,b)=>a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;
+const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
+function loadBest(){try{const r=JSON.parse(localStorage.getItem(KEY)||"{}");return typeof r.best==="number"?r.best:0;}catch{return 0;}}
+function saveBest(best){try{localStorage.setItem(KEY,JSON.stringify({version:1,best}));}catch{}}
+function emptySim(){
+  return {phase:"attract",wave:0,score:0,best:loadBest(),lives:5,flash:0,banner:null,bannerT:0,
+    player:{x:W/2-18,y:H-70,w:36,h:48,alive:true,vx:0,vy:0,iframe:0,fire:0},
+    pages:[],stones:[],zombies:[],bats:[],rain:[],banshee:null,bible:null,bursts:[],
+    spawnLeft:0,spawnT:0,rainT:0,batT:0,waveClear:0,keys:new Set()};
+}
+function plantStone(s,x,y){
+  const gx=Math.round(x/36)*36, gy=Math.round(y/32)*32;
+  if(gy<40||gy>PLAYER_ZONE-20) return;
+  if(s.stones.some(st=>st.alive&&Math.abs(st.x-gx)<22&&Math.abs(st.y-gy)<22)) return;
+  if(s.stones.filter(st=>st.alive).length>28) return;
+  s.stones.push({x:gx,y:gy,w:26,h:34,hp:3,idle:0,kind:(s.stones.length+Math.floor(x))%4,alive:true});
+}
+function seedYard(s,n){for(let i=0;i<n;i++) plantStone(s,24+Math.random()*(W-60),80+Math.random()*(PLAYER_ZONE-140));}
+function spawnZombie(s,x,y){
+  if(s.zombies.filter(z=>z.alive).length>=16) return;
+  s.zombies.push({x:x??20+Math.random()*(W-50),y:y??-30,w:28,h:40,hp:1,planted:0,spd:22+Math.min(40,s.wave*3),alive:true});
+}
+function nextWave(s){
+  s.wave++; s.waveClear=0; s.spawnLeft=4+Math.min(10,s.wave); s.spawnT=0.2;
+  if(s.wave===1){seedYard(s,8);s.spawnLeft=5;s.banner="Wave 1 — learn the yard";}
+  else if(s.wave===2) s.banner="The rain begins";
+  else s.banner="Wave "+s.wave;
+  s.bannerT=2.2;
+  if(s.wave>=3&&s.wave%3===0) s.banshee={x:-40,y:70,w:36,h:48,hp:3,t:0,dir:1,alive:true};
+}
+function startRun(s){
+  s.phase="play";s.wave=0;s.score=0;s.lives=5;s.flash=0;
+  s.pages=[];s.stones=[];s.zombies=[];s.bats=[];s.rain=[];s.banshee=null;s.bible=null;s.bursts=[];
+  s.spawnLeft=0;s.spawnT=0;s.player.x=W/2-18;s.player.y=H-70;s.player.iframe=1.5;s.player.fire=0;
+  nextWave(s);
+}
+function hurtPlayer(s){
+  if(s.player.iframe>0) return;
+  s.lives--; s.player.iframe=1.5; s.flash=0.18;
+  if(s.lives<=0){s.phase="over";s.best=Math.max(s.best,s.score);saveBest(s.best);}
+}
+function letThereBeLight(s){
+  s.flash=0.55;s.banner="Let there be lyghte";s.bannerT=1.6;s.bible=null;
+  for(const z of s.zombies) if(z.alive){z.alive=false;s.score+=50;s.bursts.push({x:z.x+z.w/2,y:z.y+z.h/2,t:0.35});}
+  for(const b of s.bats) if(b.alive){b.alive=false;s.score+=80;}
+  if(s.banshee&&s.banshee.alive){s.banshee.alive=false;s.score+=200;}
+  s.rain=[];
+}
+function held(s,...codes){return codes.some(c=>s.keys.has(c));}
+function step(s,dt){
+  dt=Math.min(dt,0.1); if(s.phase!=="play") return;
+  s.flash=Math.max(0,s.flash-dt); s.bannerT=Math.max(0,s.bannerT-dt); if(s.bannerT<=0) s.banner=null;
+  s.player.iframe=Math.max(0,s.player.iframe-dt); s.player.fire=Math.max(0,s.player.fire-dt);
+  let ax=0,ay=0;
+  if(held(s,"KeyA","ArrowLeft")) ax-=1;
+  if(held(s,"KeyD","ArrowRight")) ax+=1;
+  if(held(s,"KeyW","ArrowUp")) ay-=1;
+  if(held(s,"KeyS","ArrowDown")) ay+=1;
+  if(ax&&ay){ax*=0.707;ay*=0.707;}
+  s.player.vx=ax*210; s.player.vy=ay*210;
+  s.player.x=clamp(s.player.x+s.player.vx*dt,4,W-s.player.w-4);
+  s.player.y=clamp(s.player.y+s.player.vy*dt,PLAYER_ZONE,H-s.player.h-8);
+  if(s.player.fire<=0){s.pages.push({x:s.player.x+10,y:s.player.y-8,w:14,h:18,vy:-420,alive:true});s.player.fire=0.13;}
+  for(const p of s.pages){if(!p.alive) continue; p.y+=p.vy*dt; if(p.y<-20) p.alive=false;}
+  s.spawnT-=dt;
+  if(s.spawnLeft>0&&s.spawnT<=0&&s.zombies.filter(z=>z.alive).length<16){spawnZombie(s);s.spawnLeft--;s.spawnT=Math.max(0.5,1.45-s.wave*0.07);}
+  for(const z of s.zombies){
+    if(!z.alive) continue;
+    z.y+=z.spd*dt; z.planted+=z.spd*dt;
+    if(z.planted>70){plantStone(s,z.x,z.y+10);z.planted=0;}
+    if(z.y>H){z.alive=false;hurtPlayer(s);}
+    if(aabb(z,s.player)) hurtPlayer(s);
+  }
+  for(const st of s.stones){
+    if(!st.alive) continue;
+    st.idle+=dt;
+    const birth=6.5-Math.min(3,s.wave*0.15);
+    if(st.idle>birth&&s.wave>=2){spawnZombie(s,st.x,st.y-8);st.idle=0;st.hp--;if(st.hp<=0) st.alive=false;}
+  }
+  if(s.wave>=2){
+    s.rainT-=dt;
+    if(s.rainT<=0){s.rain.push({x:10+Math.random()*(W-20),y:-12,w:8,h:16,vy:150+s.wave*8,alive:true});s.rainT=Math.max(0.35,1.15-s.wave*0.04);}
+  }
+  for(const r of s.rain){
+    if(!r.alive) continue;
+    r.y+=r.vy*dt; if(r.y>H) r.alive=false;
+    if(aabb(r,s.player)){r.alive=false;hurtPlayer(s);}
+    for(const st of s.stones){if(st.alive&&aabb(r,st)){st.hp--;st.idle=0;r.alive=false;if(st.hp<=0) st.alive=false;break;}}
+  }
+  if(s.wave>=2){
+    s.batT-=dt;
+    if(s.batT<=0&&s.bats.filter(b=>b.alive).length<1+Math.floor(s.wave/4)){
+      const x=40+Math.random()*(W-80);
+      s.bats.push({x,y:40,w:28,h:20,t:0,amp:40+Math.random()*30,baseX:x,spd:28+s.wave*2,alive:true});
+      s.batT=5;
+    }
+  }
+  for(const b of s.bats){
+    if(!b.alive) continue;
+    b.t+=dt; b.y+=b.spd*dt; b.x=clamp(b.baseX+Math.sin(b.t*3)*b.amp,4,W-b.w);
+    if(b.y>H) b.alive=false; if(aabb(b,s.player)) hurtPlayer(s);
+  }
+  if(s.banshee&&s.banshee.alive){
+    const b=s.banshee; b.t+=dt; b.x+=b.dir*70*dt; b.y=64+Math.sin(b.t*2)*18;
+    if(b.x>W-40) b.dir=-1; if(b.x<8) b.dir=1;
+  }
+  if(s.bible){s.bible.y+=24*dt; if(aabb(s.bible,s.player)) letThereBeLight(s);}
+  for(const p of s.pages){
+    if(!p.alive) continue;
+    for(const z of s.zombies){if(z.alive&&aabb(p,z)){z.hp--;p.alive=false;if(z.hp<=0){z.alive=false;s.score+=25;plantStone(s,z.x,z.y);s.bursts.push({x:z.x+12,y:z.y+16,t:0.28});}break;}}
+    if(!p.alive) continue;
+    for(const st of s.stones){if(st.alive&&aabb(p,st)){st.hp--;st.idle=0;p.alive=false;s.score+=2;if(st.hp<=0) st.alive=false;break;}}
+    if(!p.alive) continue;
+    for(const b of s.bats){if(b.alive&&aabb(p,b)){b.alive=false;p.alive=false;s.score+=75;s.bursts.push({x:b.x,y:b.y,t:0.28});break;}}
+    if(!p.alive) continue;
+    if(s.banshee&&s.banshee.alive&&aabb(p,s.banshee)){
+      s.banshee.hp--; p.alive=false;
+      if(s.banshee.hp<=0){s.banshee.alive=false;s.score+=250;s.bible={x:s.banshee.x+4,y:s.banshee.y+10,w:22,h:28,alive:true};s.banner="READE ME";s.bannerT=2;}
+    }
+    if(!p.alive) continue;
+    if(s.bible&&aabb(p,s.bible)) letThereBeLight(s);
+  }
+  for(const b of s.bursts) b.t-=dt;
+  s.bursts=s.bursts.filter(b=>b.t>0);
+  s.pages=s.pages.filter(p=>p.alive).slice(-40);
+  s.zombies=s.zombies.filter(z=>z.alive||z.y<H+40);
+  s.bats=s.bats.filter(b=>b.alive);
+  s.rain=s.rain.filter(r=>r.alive);
+  s.stones=s.stones.filter(st=>st.alive);
+  const threat=s.spawnLeft>0||s.zombies.some(z=>z.alive)||s.bats.some(b=>b.alive)||(s.banshee&&s.banshee.alive);
+  if(!threat){s.waveClear+=dt; if(s.waveClear>1.1) nextWave(s);}
+  if(s.score>s.best){s.best=s.score;saveBest(s.best);}
+}
+function cell(ctx,img,frame,cols,rows,dx,dy,dw,dh){
+  if(!img.complete||!img.naturalWidth) return;
+  const cw=img.naturalWidth/cols, ch=img.naturalHeight/rows;
+  const c=frame%cols, r=Math.floor(frame/cols)%rows;
+  ctx.drawImage(img,c*cw,r*ch,cw,ch,dx,dy,dw,dh);
+}
+function wrap(ctx,text,x,y,max,lh){
+  const words=text.split(" "); let line="", yy=y;
+  for(const w of words){const test=line?line+" "+w:w; if(ctx.measureText(test).width>max){ctx.fillText(line,x,yy);line=w;yy+=lh;} else line=test;}
+  ctx.fillText(line,x,yy);
+}
+const names=["host","zombie","stone","bat","banshee","page","bible","burst","yard"];
+const img={}; names.forEach(n=>{const i=new Image(); i.src=n+(n==="yard"?".jpg":".png"); img[n]=i;});
+const canvas=document.getElementById("c"), ctx=canvas.getContext("2d"), clock=document.getElementById("clock");
+const s=emptySim();
+function boot(){startRun(s); clock.style.display="none";}
+clock.onclick=boot;
+window.addEventListener("keydown",e=>{
+  s.keys.add(e.code);
+  if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault();
+  if(s.phase!=="play"&&(e.code==="Enter"||e.code==="Space")) boot();
+});
+window.addEventListener("keyup",e=>s.keys.delete(e.code));
+window.addEventListener("blur",()=>s.keys.clear());
+let touch=null;
+canvas.addEventListener("pointerdown",e=>{
+  if(s.phase!=="play"){boot();return;}
+  canvas.setPointerCapture(e.pointerId); touch={id:e.pointerId,x:e.clientX,y:e.clientY};
+});
+canvas.addEventListener("pointermove",e=>{
+  if(!touch||touch.id!==e.pointerId) return;
+  const dx=e.clientX-touch.x, dy=e.clientY-touch.y;
+  ["KeyA","KeyD","KeyW","KeyS"].forEach(k=>s.keys.delete(k));
+  if(Math.abs(dx)>12) s.keys.add(dx>0?"KeyD":"KeyA");
+  if(Math.abs(dy)>12) s.keys.add(dy>0?"KeyS":"KeyW");
+});
+function up(e){if(!touch||touch.id!==e.pointerId) return; touch=null; ["KeyA","KeyD","KeyW","KeyS"].forEach(k=>s.keys.delete(k));}
+canvas.addEventListener("pointerup",up); canvas.addEventListener("pointercancel",up);
+function draw(t){
+  ctx.imageSmoothingEnabled=false; ctx.clearRect(0,0,W,H);
+  if(img.yard.complete) ctx.drawImage(img.yard,0,0,W,H); else {ctx.fillStyle="#120e18";ctx.fillRect(0,0,W,H);}
+  const frame=Math.floor(t*8)%4;
+  for(const st of s.stones) if(st.alive) cell(ctx,img.stone,st.kind%4,2,2,st.x,st.y,st.w,st.h);
+  for(const z of s.zombies) if(z.alive) cell(ctx,img.zombie,frame,2,2,z.x,z.y,z.w,z.h);
+  for(const b of s.bats) if(b.alive) cell(ctx,img.bat,frame,2,2,b.x,b.y,b.w,b.h);
+  if(s.banshee&&s.banshee.alive) cell(ctx,img.banshee,frame,2,2,s.banshee.x,s.banshee.y,s.banshee.w,s.banshee.h);
+  for(const p of s.pages) if(p.alive) cell(ctx,img.page,frame,2,2,p.x,p.y,p.w,p.h);
+  for(const r of s.rain) if(r.alive){ctx.fillStyle="rgba(80,220,110,0.75)";ctx.fillRect(r.x,r.y,3,10);}
+  if(s.bible){cell(ctx,img.bible,0,1,1,s.bible.x,s.bible.y,28,32);ctx.fillStyle="#e8dcc8";ctx.font="8px 'Bebas Neue',sans-serif";ctx.textAlign="center";ctx.fillText("READE ME",s.bible.x+14,s.bible.y-4);}
+  for(const b of s.bursts){const f=Math.min(3,Math.floor((0.35-b.t)/0.08)); cell(ctx,img.burst,f,2,2,b.x-18,b.y-18,36,36);}
+  if(s.player.iframe<=0||Math.floor(t*16)%2===0) cell(ctx,img.host,frame,2,2,s.player.x-4,s.player.y-4,44,56);
+  ctx.fillStyle="rgba(8,6,10,0.55)"; ctx.fillRect(0,0,W,34);
+  ctx.fillStyle="#e8dcc8"; ctx.font="13px 'IBM Plex Mono',monospace"; ctx.textAlign="left"; ctx.fillText(String(s.score).padStart(6,"0"),8,22);
+  ctx.textAlign="right"; ctx.fillText("W"+s.wave+"  ×"+Math.max(0,s.lives),W-8,22);
+  if(s.flash>0){ctx.fillStyle="rgba(232,220,200,"+Math.min(0.85,s.flash*1.6)+")";ctx.fillRect(0,0,W,H);}
+  if(s.banner&&s.phase==="play"){ctx.fillStyle="rgba(12,10,14,0.7)";ctx.fillRect(30,48,W-60,28);ctx.fillStyle="#e8dcc8";ctx.font="14px 'Bebas Neue',sans-serif";ctx.textAlign="center";ctx.fillText(s.banner,W/2,67);}
+  if(s.phase!=="play"){
+    ctx.fillStyle="rgba(10,8,12,0.78)"; ctx.fillRect(0,0,W,H); ctx.textAlign="center";
+    ctx.fillStyle="#9a9184"; ctx.font="12px 'Bebas Neue',sans-serif"; ctx.fillText("SL TONIGHT PRESENTS",W/2,210);
+    ctx.fillStyle="#e8dcc8"; ctx.font="42px 'Bebas Neue',sans-serif"; ctx.fillText("VERBUM",W/2,258);
+    ctx.fillStyle="#c9a84c"; ctx.font="16px 'Bebas Neue',sans-serif"; ctx.fillText("THE DEAD SHIFT",W/2,284);
+    ctx.fillStyle="#9a9184"; ctx.font="12px 'IBM Plex Sans',sans-serif"; ctx.fillText("We Are Where The Nightmares Go",W/2,308);
+    ctx.fillStyle="#e8dcc8"; ctx.font="18px 'Bebas Neue',sans-serif";
+    ctx.fillText(s.phase==="over"?"SHIFT OVER — TAP TO CLOCK IN":"CLOCK IN",W/2,360);
+    if(s.phase==="over"){ctx.font="14px 'IBM Plex Mono',monospace";ctx.fillText(String(s.score),W/2,386);}
+    else {ctx.fillStyle="#6f675c";ctx.font="11px 'IBM Plex Sans',sans-serif";wrap(ctx,"Pages from the booth. Stones breed if you leave them. Rain eats the yard. READE ME ends the living.",W/2,400,W-48,14);}
+  }
+  clock.style.display=s.phase==="play"?"none":"inline-flex";
+}
+let last=performance.now(), acc=0;
+function tick(now){
+  const dt=Math.min(0.05,(now-last)/1000); last=now; acc+=dt;
+  while(acc>=1/60){step(s,1/60); acc-=1/60;}
+  draw(now/1000); requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
